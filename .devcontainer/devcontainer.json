@@ -1,0 +1,19 @@
+{
+    "name": "mmaction2-docker",
+    "image": "mmaction2",
+    "runArgs": [
+        "--gpus",
+        "all",
+        "-v",
+        "D:/dataset:/mmaction2/data"
+    ],
+    "workspaceFolder": "/mmaction2",
+    "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "ms-vscode-remote.remote-containers"
+    ],
+    "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+    }
+}
