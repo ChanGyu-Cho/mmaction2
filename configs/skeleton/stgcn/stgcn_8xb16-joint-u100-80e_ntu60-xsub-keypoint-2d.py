@@ -7,7 +7,7 @@ model = dict(
     cls_head=dict(type='GCNHead', num_classes=60, in_channels=256))
 
 dataset_type = 'PoseDataset'
-ann_file = 'data/skeleton/ntu60_2d.pkl'
+ann_file = 'sample_skeleton_data.pkl'
 train_pipeline = [
     dict(type='PreNormalize2D'),
     dict(type='GenSkeFeat', dataset='coco', feats=['j']),
