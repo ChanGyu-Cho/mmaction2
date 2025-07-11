@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
-올바른 OpenPose BODY25 → NTU RGB+D 25 키포인트 변환기
-키포인트 개수를 맞추고 올바른 매핑을 적용
+개선된 OpenPose BODY25 → NTU-RGB+D 변환기
+좌표 정규화, 신뢰도 필터링, 스켈레톤 중심화 등을 추가
 """
 import argparse
 import os
@@ -11,143 +11,96 @@ import sys
 import numpy as np
 import pandas as pd
 
-# OpenPose BODY25 키포인트 인덱스 (0-24)
-BODY25_KEYPOINTS = [
-    "Nose", "Neck", "RShoulder", "RElbow", "RWrist",
-    "LShoulder", "LElbow", "LWrist", "MidHip", "RHip",
-    "RKnee", "RAnkle", "LHip", "LKnee", "LAnkle",
-    "REye", "LEye", "REar", "LEar", "LBigToe",
-    "LSmallToe", "LHeel", "RBigToe", "RSmallToe", "RHeel"
+# BODY_25 → COCO(17) 매핑 (검증 필요)
+MAPPING_BODY25_TO_COCO17 = [
+    0,16,15,18,17,5,2,6,3,7,4,12,9,13,10,14,11
 ]
 
-# NTU RGB+D 25 키포인트 형식에 맞춘 매핑
-# NTU RGB+D는 Kinect V2의 25개 관절을 사용
-# 참고: https://github.com/shahroudy/NTURGB-D
-NTU_25_KEYPOINTS = [
-    "SpineBase", "SpineMid", "Neck", "Head",
-    "ShoulderLeft", "ElbowLeft", "WristLeft", "HandLeft",
-    "ShoulderRight", "ElbowRight", "WristRight", "HandRight",
-    "HipLeft", "KneeLeft", "AnkleLeft", "FootLeft",
-    "HipRight", "KneeRight", "AnkleRight", "FootRight",
-    "SpineShoulder", "HandTipLeft", "ThumbLeft", "HandTipRight", "ThumbRight"
-]
-
-# OpenPose BODY25 → NTU RGB+D 25 직접 매핑
-# 완전히 일치하지 않는 키포인트는 가장 유사한 것으로 매핑
-BODY25_TO_NTU25_MAPPING = [
-    8,   # 0: SpineBase ← MidHip (8)
-    1,   # 1: SpineMid ← Neck (1) 
-    1,   # 2: Neck ← Neck (1)
-    0,   # 3: Head ← Nose (0)
-    5,   # 4: ShoulderLeft ← LShoulder (5)
-    6,   # 5: ElbowLeft ← LElbow (6)
-    7,   # 6: WristLeft ← LWrist (7)
-    7,   # 7: HandLeft ← LWrist (7) - 근사
-    2,   # 8: ShoulderRight ← RShoulder (2)
-    3,   # 9: ElbowRight ← RElbow (3)
-    4,   # 10: WristRight ← RWrist (4)
-    4,   # 11: HandRight ← RWrist (4) - 근사
-    12,  # 12: HipLeft ← LHip (12)
-    13,  # 13: KneeLeft ← LKnee (13)
-    14,  # 14: AnkleLeft ← LAnkle (14)
-    21,  # 15: FootLeft ← LHeel (21)
-    9,   # 16: HipRight ← RHip (9)
-    10,  # 17: KneeRight ← RKnee (10)
-    11,  # 18: AnkleRight ← RAnkle (11)
-    24,  # 19: FootRight ← RHeel (24)
-    1,   # 20: SpineShoulder ← Neck (1) - 근사
-    7,   # 21: HandTipLeft ← LWrist (7) - 근사
-    7,   # 22: ThumbLeft ← LWrist (7) - 근사
-    4,   # 23: HandTipRight ← RWrist (4) - 근사
-    4,   # 24: ThumbRight ← RWrist (4) - 근사
-]
-
-def convert_body25_to_ntu25(body25_keypoints, body25_scores):
+def normalize_coordinates(keypoints, img_shape, method='0to1'):
     """
-    OpenPose BODY25 → NTU RGB+D 25 키포인트 변환 (단순 매핑)
+    좌표 정규화
     Args:
-        body25_keypoints: (M, T, 25, 2) 형태
-        body25_scores: (M, T, 25) 형태
-    Returns:
-        ntu25_keypoints: (M, T, 25, 2) 형태
-        ntu25_scores: (M, T, 25) 형태
+        keypoints: (M, T, V, 2) 형태의 키포인트
+        img_shape: (height, width)
+        method: '0to1' or 'center' or 'skeleton_center'
     """
-    M, T, V, C = body25_keypoints.shape
-    ntu25_keypoints = np.zeros((M, T, 25, C), dtype=np.float32)
-    ntu25_scores = np.zeros((M, T, 25), dtype=np.float32)
-    
-    # 직접 매핑
-    for ntu25_idx, body25_idx in enumerate(BODY25_TO_NTU25_MAPPING):
-        ntu25_keypoints[:, :, ntu25_idx, :] = body25_keypoints[:, :, body25_idx, :]
-        ntu25_scores[:, :, ntu25_idx] = body25_scores[:, :, body25_idx]
-    
-    # SpineMid 보간 (SpineBase와 Neck의 중점)
-    spine_base_valid = ntu25_scores[:, :, 0] > 0  # SpineBase
-    neck_valid = ntu25_scores[:, :, 2] > 0        # Neck
-    both_valid = spine_base_valid & neck_valid
-    
-    # 유효한 프레임에서만 보간
-    ntu25_keypoints[:, :, 1, :] = (ntu25_keypoints[:, :, 0, :] + ntu25_keypoints[:, :, 2, :]) / 2.0
-    ntu25_scores[:, :, 1] = (ntu25_scores[:, :, 0] + ntu25_scores[:, :, 2]) / 2.0
-    
-    # 둘 다 유효하지 않은 경우 0으로 설정
-    for m in range(M):
-        for t in range(T):
-            if not both_valid[m, t]:
-                ntu25_keypoints[m, t, 1, :] = 0
-                ntu25_scores[m, t, 1] = 0
-    
-    return ntu25_keypoints, ntu25_scores
-
-def normalize_coordinates(keypoints, img_shape, method='skeleton_center'):
     height, width = img_shape
     normalized_kp = keypoints.copy()
     
-    if method == 'skeleton_center':
+    if method == '0to1':
+        # [0, 1] 범위로 정규화
+        normalized_kp[:, :, :, 0] = keypoints[:, :, :, 0] / width
+        normalized_kp[:, :, :, 1] = keypoints[:, :, :, 1] / height
+        
+    elif method == 'center':
+        # [-1, 1] 범위로 중심 기준 정규화
+        normalized_kp[:, :, :, 0] = (keypoints[:, :, :, 0] - width/2) / (width/2)
+        normalized_kp[:, :, :, 1] = (keypoints[:, :, :, 1] - height/2) / (height/2)
+        
+    elif method == 'skeleton_center':
+        # 스켈레톤 중심 기준 정규화
         for m in range(keypoints.shape[0]):
             for t in range(keypoints.shape[1]):
                 valid_mask = (keypoints[m, t, :, 0] != 0) & (keypoints[m, t, :, 1] != 0)
                 if valid_mask.any():
                     valid_kp = keypoints[m, t, valid_mask, :]
+                    center_x = valid_kp[:, 0].mean()
+                    center_y = valid_kp[:, 1].mean()
                     
-                    # 몸통 중심 (SpineBase, SpineMid, Neck)을 기준으로 정규화
-                    torso_indices = [0, 1, 2]  # NTU25 기준
-                    torso_mask = np.isin(np.where(valid_mask)[0], torso_indices)
+                    # 스켈레톤 크기 (바운딩 박스 기준)
+                    bbox_w = valid_kp[:, 0].max() - valid_kp[:, 0].min()
+                    bbox_h = valid_kp[:, 1].max() - valid_kp[:, 1].min()
+                    scale = max(bbox_w, bbox_h)
                     
-                    if torso_mask.any():
-                        # ⚠️ 수정된 부분: valid_kp[torso_mask] 로만 인덱싱
-                        torso_kp = valid_kp[torso_mask]
-                        center_x = torso_kp[:, 0].mean()
-                        center_y = torso_kp[:, 1].mean()
-                        
-                        bbox_w = valid_kp[:, 0].max() - valid_kp[:, 0].min()
-                        bbox_h = valid_kp[:, 1].max() - valid_kp[:, 1].min()
-                        scale = max(bbox_w, bbox_h, 1.0)
-                        
+                    if scale > 0:
                         normalized_kp[m, t, :, 0] = (keypoints[m, t, :, 0] - center_x) / scale
                         normalized_kp[m, t, :, 1] = (keypoints[m, t, :, 1] - center_y) / scale
-                    else:
-                        # torso 관절이 없으면 전체 중심 사용
-                        center_x = valid_kp[:, 0].mean()
-                        center_y = valid_kp[:, 1].mean()
-                        bbox_w = valid_kp[:, 0].max() - valid_kp[:, 0].min()
-                        bbox_h = valid_kp[:, 1].max() - valid_kp[:, 1].min()
-                        scale = max(bbox_w, bbox_h, 1.0)
-                        
-                        normalized_kp[m, t, :, 0] = (keypoints[m, t, :, 0] - center_x) / scale
-                        normalized_kp[m, t, :, 1] = (keypoints[m, t, :, 1] - center_y) / scale
-    elif method == '0to1':
-        normalized_kp[:, :, :, 0] = keypoints[:, :, :, 0] / width
-        normalized_kp[:, :, :, 1] = keypoints[:, :, :, 1] / height
     
     return normalized_kp
 
+def filter_by_confidence(keypoints, scores, threshold=0.1):
+    """신뢰도 기반 키포인트 필터링"""
+    filtered_kp = keypoints.copy()
+    filtered_scores = scores.copy()
+    
+    # 신뢰도가 낮은 키포인트를 0으로 설정
+    low_confidence_mask = scores < threshold
+    filtered_kp[low_confidence_mask] = 0
+    filtered_scores[low_confidence_mask] = 0
+    
+    return filtered_kp, filtered_scores
+
+def interpolate_missing_keypoints(keypoints, scores, method='linear'):
+    """누락된 키포인트 보간"""
+    interpolated_kp = keypoints.copy()
+    
+    for m in range(keypoints.shape[0]):
+        for v in range(keypoints.shape[2]):
+            for c in range(keypoints.shape[3]):
+                # 해당 키포인트의 시간 시리즈
+                series = keypoints[m, :, v, c]
+                valid_mask = series != 0
+                
+                if valid_mask.any() and not valid_mask.all():
+                    # 선형 보간
+                    valid_indices = np.where(valid_mask)[0]
+                    if len(valid_indices) > 1:
+                        interpolated_values = np.interp(
+                            np.arange(len(series)),
+                            valid_indices,
+                            series[valid_indices]
+                        )
+                        # 기존 유효한 값은 유지, 무효한 값만 보간
+                        interpolated_kp[m, ~valid_mask, v, c] = interpolated_values[~valid_mask]
+    
+    return interpolated_kp
 
 def convert_csv_to_pkl(csv_path, pkl_path, frame_dir,
                        label=0, img_shape=(1080, 1920),
-                       normalize_method='skeleton_center',
-                       confidence_threshold=0.1):
-    """OpenPose BODY25 → NTU RGB+D 25 키포인트 변환"""
+                       normalize_method='0to1',
+                       confidence_threshold=0.1,
+                       interpolate=False):
+    """개선된 CSV → PKL 변환"""
     
     if not os.path.isfile(csv_path):
         raise FileNotFoundError(f"[CSV→PKL] CSV not found: {csv_path}")
@@ -159,49 +112,54 @@ def convert_csv_to_pkl(csv_path, pkl_path, frame_dir,
         raise ValueError(f"[CSV→PKL] Expect 25*3 columns, got {df.shape[1]}")
     
     T = len(df)
-    V = 25
+    V25 = 25
     M, C = 1, 2
     
-    print(f"[INFO] Processing {T} frames with {V} keypoints")
+    print(f"[INFO] Processing {T} frames with {V25} keypoints")
     
-    # 1. BODY25 데이터 로드
-    body25_kp = np.zeros((M, T, V, C), dtype=np.float32)
-    body25_score = np.zeros((M, T, V), dtype=np.float32)
+    # 1. 원본 데이터 로드
+    kp25 = np.zeros((M, T, V25, C), dtype=np.float32)
+    score25 = np.zeros((M, T, V25), dtype=np.float32)
     
     for t, row in df.iterrows():
-        for v in range(V):
+        for v in range(V25):
             x, y, s = row[3*v:3*v+3]
-            body25_kp[0, t, v, 0] = x
-            body25_kp[0, t, v, 1] = y
-            body25_score[0, t, v] = s
+            kp25[0, t, v, 0] = x
+            kp25[0, t, v, 1] = y
+            score25[0, t, v] = s
     
-    print(f"[INFO] BODY25 coordinate range: X[{body25_kp[:,:,:,0].min():.1f}, {body25_kp[:,:,:,0].max():.1f}], Y[{body25_kp[:,:,:,1].min():.1f}, {body25_kp[:,:,:,1].max():.1f}]")
+    print(f"[INFO] Original coordinate range: X[{kp25[:,:,:,0].min():.1f}, {kp25[:,:,:,0].max():.1f}], Y[{kp25[:,:,:,1].min():.1f}, {kp25[:,:,:,1].max():.1f}]")
     
     # 2. 신뢰도 필터링
     if confidence_threshold > 0:
-        low_conf_mask = body25_score < confidence_threshold
-        body25_kp[low_conf_mask] = 0
-        body25_score[low_conf_mask] = 0
+        kp25, score25 = filter_by_confidence(kp25, score25, confidence_threshold)
         print(f"[INFO] Applied confidence filtering (threshold: {confidence_threshold})")
     
-    # 3. BODY25 → NTU25 변환
-    ntu25_kp, ntu25_score = convert_body25_to_ntu25(body25_kp, body25_score)
-    print(f"[INFO] Converted BODY25 → NTU25: {ntu25_kp.shape}")
+    # 3. 키포인트 보간
+    if interpolate:
+        kp25 = interpolate_missing_keypoints(kp25, score25)
+        print(f"[INFO] Applied keypoint interpolation")
     
     # 4. 좌표 정규화
-    ntu25_kp = normalize_coordinates(ntu25_kp, img_shape, normalize_method)
+    kp25 = normalize_coordinates(kp25, img_shape, normalize_method)
     print(f"[INFO] Applied coordinate normalization ({normalize_method})")
-    print(f"[INFO] NTU25 coordinate range: X[{ntu25_kp[:,:,:,0].min():.4f}, {ntu25_kp[:,:,:,0].max():.4f}], Y[{ntu25_kp[:,:,:,1].min():.4f}, {ntu25_kp[:,:,:,1].max():.4f}]")
+    print(f"[INFO] Normalized coordinate range: X[{kp25[:,:,:,0].min():.4f}, {kp25[:,:,:,0].max():.4f}], Y[{kp25[:,:,:,1].min():.4f}, {kp25[:,:,:,1].max():.4f}]")
     
-    # 5. NTU RGB+D 형식으로 패키징
+    # 5. BODY25 → COCO17 변환
+    kp17 = kp25[:, :, MAPPING_BODY25_TO_COCO17, :]
+    score17 = score25[:, :, MAPPING_BODY25_TO_COCO17]
+    
+    print(f"[INFO] Converted to COCO17 format: {kp17.shape}")
+    
+    # 6. NTU 형식으로 패키징
     sample = {
         'frame_dir': frame_dir,
         'label': label,
         'img_shape': img_shape,
         'original_shape': img_shape,
         'total_frames': T,
-        'keypoint': ntu25_kp,          # (1, T, 25, 2)
-        'keypoint_score': ntu25_score  # (1, T, 25)
+        'keypoint': kp17,
+        'keypoint_score': score17
     }
     
     data = {
@@ -212,38 +170,37 @@ def convert_csv_to_pkl(csv_path, pkl_path, frame_dir,
     with open(pkl_path, 'wb') as f:
         pickle.dump(data, f)
     
-    print(f"[SUCCESS] Wrote PKL: {pkl_path} (T={T}, V=25, M={M}, C={C})")
+    print(f"[SUCCESS] Wrote PKL: {pkl_path} (T={T}, V=17, M={M}, C={C})")
     
-    # 6. 변환 결과 요약
+    # 7. 변환 결과 요약
     print(f"\n=== Conversion Summary ===")
-    print(f"Input format: OpenPose BODY25 (25 keypoints)")
-    print(f"Output format: NTU RGB+D 25 (25 keypoints)")
     print(f"Frames: {T}")
+    print(f"Keypoints: {V25} → 17")
     print(f"Normalization: {normalize_method}")
     print(f"Confidence threshold: {confidence_threshold}")
-    
-    # 키포인트 유효성 통계
-    valid_counts = np.sum(ntu25_score > 0, axis=(0, 1))
-    print(f"\nKeypoint validity statistics:")
-    for i, (name, count) in enumerate(zip(NTU_25_KEYPOINTS, valid_counts)):
-        print(f"  {i:2d}. {name:15s}: {count:4d}/{T} ({count/T*100:.1f}%)")
+    print(f"Interpolation: {interpolate}")
     
     return data
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenPose BODY25 → NTU RGB+D 25 Keypoint Converter + ST-GCN++ Inference")
+        description="Improved OpenPose BODY25→COCO17 PKL + ST-GCN++ Inference")
     
+    # 기본 매개변수
     parser.add_argument('--csv', required=True, help='OpenPose BODY25 CSV path')
     parser.add_argument('--frame-dir', required=True, help='video ID (frame_dir)')
-    parser.add_argument('--pkl', default='temp_ntu25_skel.pkl', help='output PKL path')
+    parser.add_argument('--pkl', default='temp_skel.pkl', help='output PKL path')
     parser.add_argument('--label', type=int, default=0, help='dummy label')
     parser.add_argument('--img-shape', nargs=2, type=int, default=[1080,1920], help='H W')
-    parser.add_argument('--normalize', default='skeleton_center', 
-                       choices=['skeleton_center', '0to1'],
+    
+    # 개선된 매개변수
+    parser.add_argument('--normalize', default='0to1', 
+                       choices=['0to1', 'center', 'skeleton_center'],
                        help='coordinate normalization method')
     parser.add_argument('--confidence-threshold', type=float, default=0.1,
                        help='confidence threshold for filtering keypoints')
+    parser.add_argument('--interpolate', action='store_true',
+                       help='interpolate missing keypoints')
     
     # 추론 매개변수
     parser.add_argument('--cfg', required=True, help='MMAction2 config.py')
@@ -261,7 +218,8 @@ def main():
             label=args.label,
             img_shape=tuple(args.img_shape),
             normalize_method=args.normalize,
-            confidence_threshold=args.confidence_threshold
+            confidence_threshold=args.confidence_threshold,
+            interpolate=args.interpolate
         )
     except Exception as e:
         print(f"[ERROR] conversion failed:\n  {e}", file=sys.stderr)
