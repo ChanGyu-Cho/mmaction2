@@ -23,7 +23,7 @@ model = dict(
 )
 
 dataset_type = 'PoseDataset'
-ann_file = r"D:\golfDataset\스포츠 사람 동작 영상(골프)\Training\Public\male\train\crop_pkl\skeleton_dataset_90_10.pkl"
+ann_file = r"D:\golfDataset\dataset\test\crop_pkl\skeleton_dataset_90_10.pkl"
 
 train_pipeline = [
     dict(type='PreNormalize2D'),
@@ -125,8 +125,14 @@ optim_wrapper = dict(
 )
 
 default_hooks = dict(
-    checkpoint=dict(interval=1),
-    logger=dict(interval=100)
+    checkpoint=dict(interval=1, save_best='auto', type='CheckpointHook'),
+    logger=dict(interval=100, type='LoggerHook'),
+    param_scheduler=dict(type='ParamSchedulerHook'),
+    runtime_info=dict(type='RuntimeInfoHook'),
+    sampler_seed=dict(type='DistSamplerSeedHook'),
+    sync_buffers=dict(type='SyncBuffersHook'),
+    timer=dict(type='IterTimerHook'),
+    visualization=dict(type='VisualizationHook')  # 이 줄을 추가하세요
 )
 
 custom_hooks = [
