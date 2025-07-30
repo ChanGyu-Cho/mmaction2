@@ -19,6 +19,8 @@ from .processing import (CenterCrop, ColorJitter, Flip, Fuse, MultiScaleCrop,
                          TenCrop, ThreeCrop)
 from .text_transforms import CLIPTokenize
 from .wrappers import ImgAug, PytorchVideoWrapper, TorchVisionWrapper
+from .add_frame_dir import AddFrameDirToMeta  # 👈 반드시 추가
+
 
 __all__ = [
     'ArrayDecode', 'AudioFeatureSelector', 'BuildPseudoClip', 'CenterCrop',
