@@ -1,30 +1,16 @@
 _base_ = '../../_base_/default_runtime.py'
-load_from = r"D:\mmaction2\checkpoints\stgcnpp_8xb16-joint-u100-80e_ntu60-xsub-keypoint-2d_20221228-86e1e77a.pth"
 
+load_from = r"D:\mmaction2\checkpoints\stgcnpp_8xb16-joint-u100-80e_ntu60-xsub-keypoint-2d_20221228-86e1e77a.pth"
 
 dataset_type = 'PoseDataset'
 ann_file = r"D:\golfDataset\dataset\crop_pkl\train_unnorm.pkl"
-EPOCH = 10
+test_ann_file = r"D:\golfDataset\dataset\crop_pkl\test_unnorm.pkl"
+EPOCH = 5
 clip_len = 50
 fp16 = None
 # dict(type='Fp16OptimizerHook', loss_scale='dynamic') 원래
 auto_scale_lr = dict(enable=False, base_batch_size=128)
 
-# my_stgcnpp.py 맨 위에 추가
-custom_imports = dict(
-    imports=['tools.loss_nan_check_hook'],
-    allow_failed_imports=False
-)
-
-model = dict(
-    type='RecognizerGCN',
-    backbone=dict(
-        type='STGCN',
-        gcn_adaptive='init',
-        gcn_with_res=True,
-        tcn_type='mstcn',
-        graph_cfg=dict(layout='coco', mode='spatial')),
-    cls_head=dict(type='GCNHead', num_classes=2, in_channels=256))
 
 train_pipeline = [
     dict(type='PreNormalize2D'),
@@ -85,7 +71,7 @@ test_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type=dataset_type,
-        ann_file=ann_file,
+        ann_file=test_ann_file,
         pipeline=test_pipeline,
         split='xsub_val',
         test_mode=True))
@@ -114,3 +100,23 @@ auto_scale_lr = dict(enable=False, base_batch_size=128)
 
 val_evaluator = [dict(type='AccMetric')]
 test_evaluator = val_evaluator
+
+model = dict(
+    type='RecognizerGCN',
+    backbone=dict(
+        type='STGCN',
+        gcn_adaptive='init',
+        gcn_with_res=True,
+        tcn_type='mstcn',
+        graph_cfg=dict(layout='coco', mode='spatial')),
+    cls_head=dict(
+        type='GCNHead',
+        num_classes=2,
+        in_channels=256,
+        loss_cls=dict(
+            type='CrossEntropyLoss',
+            class_weight=[2.0, 1.0],  # ← 리스트 리터럴로!
+            loss_weight=1.0
+        )
+    )
+)
