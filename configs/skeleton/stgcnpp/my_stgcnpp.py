@@ -1,183 +1,116 @@
-ann_file = r"D:\golfDataset\dataset\crop_pkl\train.pkl"
-EPOCH = 1
-auto_scale_lr = dict(base_batch_size=128, enable=False)
-custom_hooks = [
-    dict(
-        min_delta=0.001,
-        monitor='acc/top1',  # 'val/top1_acc' → 'acc/top1'로 변경
-        patience=5,
-        type='EarlyStoppingHook'),
-]
+_base_ = '../../_base_/default_runtime.py'
+load_from = r"D:\mmaction2\checkpoints\stgcnpp_8xb16-joint-u100-80e_ntu60-xsub-keypoint-2d_20221228-86e1e77a.pth"
+
+
 dataset_type = 'PoseDataset'
-default_hooks = dict(
-    checkpoint=dict(interval=1, save_best='auto', type='CheckpointHook'),
-    logger=dict(ignore_last=False, interval=100, type='LoggerHook'),
-    param_scheduler=dict(type='ParamSchedulerHook'),
-    runtime_info=dict(type='RuntimeInfoHook'),
-    sampler_seed=dict(type='DistSamplerSeedHook'),
-    sync_buffers=dict(type='SyncBuffersHook'),
-    timer=dict(type='IterTimerHook'),
-    visualization=dict(type='VisualizationHook'))
-default_scope = 'mmaction'
-env_cfg = dict(
-    cudnn_benchmark=False,
-    dist_cfg=dict(backend='nccl'),
-    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0))
-fp16 = 
-# dict(loss_scale='dynamic', type='Fp16OptimizerHook')
-launcher = 'none'
-load_from = 'checkpoints\stgcnpp_8xb16-joint-u100-80e_ntu60-xsub-keypoint-2d_20221228-86e1e77a.pth'
-log_level = 'INFO'
-log_processor = dict(by_epoch=True, type='LogProcessor', window_size=20)
+ann_file = r"D:\golfDataset\dataset\crop_pkl\train_unnorm.pkl"
+EPOCH = 10
+clip_len = 50
+fp16 = None
+# dict(type='Fp16OptimizerHook', loss_scale='dynamic') 원래
+auto_scale_lr = dict(enable=False, base_batch_size=128)
+
+# my_stgcnpp.py 맨 위에 추가
+custom_imports = dict(
+    imports=['tools.loss_nan_check_hook'],
+    allow_failed_imports=False
+)
+
 model = dict(
+    type='RecognizerGCN',
     backbone=dict(
+        type='STGCN',
         gcn_adaptive='init',
         gcn_with_res=True,
-        graph_cfg=dict(layout='coco', mode='spatial'),
         tcn_type='mstcn',
-        type='STGCN'),
-    cls_head=dict(dropout=0.1, in_channels=256, num_classes=2, type='GCNHead'),
-    type='RecognizerGCN')
-optim_wrapper = dict(
-    optimizer=dict(
-        lr=0.0005, momentum=0.9, nesterov=True, type='SGD',
-        weight_decay=0.0001))
-param_scheduler = [
-    dict(
-        begin=0,
-        by_epoch=True,
-        end=10,
-        gamma=0.1,
-        milestones=[
-            3,
-            6,
-        ],
-        type='MultiStepLR'),
-]
-resume = False
-test_cfg = dict(type='TestLoop')
-test_dataloader = dict(
-    batch_size=1,
-    dataset=dict(
-        ann_file= ann_file,
-        pipeline=[
-            dict(type='PreNormalize2D'),
-            dict(dataset='coco', feats=[
-                'j',
-            ], type='GenSkeFeat'),
-            dict(
-                clip_len=100,
-                num_clips=10,
-                test_mode=True,
-                type='UniformSampleFrames'),
-            dict(type='PoseDecode'),
-            dict(num_person=2, type='FormatGCNInput'),
-            dict(type='PackActionInputs'),
-        ],
-        split='xsub_val',
-        test_mode=True,
-        type='PoseDataset'),
-    num_workers=2,
-    persistent_workers=True,
-    sampler=dict(shuffle=False, type='DefaultSampler'))
-test_evaluator = [
-    dict(type='AccMetric'),
-    dict(out_file_path='result/result.pkl', type='DumpResults'),
-]
-test_pipeline = [
-    dict(type='PreNormalize2D'),
-    dict(dataset='coco', feats=[
-        'j',
-    ], type='GenSkeFeat'),
-    dict(
-        clip_len=100, num_clips=10, test_mode=True,
-        type='UniformSampleFrames'),
-    dict(type='PoseDecode'),
-    dict(num_person=2, type='FormatGCNInput'),
-    dict(type='PackActionInputs'),
-    dict(type='AddFrameDirToMeta')
+        graph_cfg=dict(layout='coco', mode='spatial')),
+    cls_head=dict(type='GCNHead', num_classes=2, in_channels=256))
 
-]
-train_cfg = dict(
-    max_epochs=EPOCH, type='EpochBasedTrainLoop', val_begin=1, val_interval=1)
-train_dataloader = dict(
-    batch_size=16,
-    dataset=dict(
-        dataset=dict(
-            ann_file= ann_file,
-            pipeline=[
-                dict(type='PreNormalize2D'),
-                dict(dataset='coco', feats=[
-                    'j',
-                ], type='GenSkeFeat'),
-                dict(clip_len=100, type='UniformSampleFrames'),
-                dict(type='PoseDecode'),
-                dict(num_person=2, type='FormatGCNInput'),
-                dict(type='PackActionInputs'),
-            ],
-            split='xsub_train',
-            type='PoseDataset'),
-        times=1,
-        type='RepeatDataset'),
-    num_workers=2,
-    persistent_workers=True,
-    sampler=dict(shuffle=True, type='DefaultSampler'))
 train_pipeline = [
     dict(type='PreNormalize2D'),
-    dict(dataset='coco', feats=[
-        'j',
-    ], type='GenSkeFeat'),
-    dict(clip_len=100, type='UniformSampleFrames'),
+    dict(type='GenSkeFeat', dataset='coco', feats=['bm']),
+    dict(type='UniformSampleFrames', clip_len=clip_len),
     dict(type='PoseDecode'),
-    dict(num_person=2, type='FormatGCNInput'),
-    dict(type='PackActionInputs'),
-    dict(type='AddFrameDirToMeta')
-]
-val_cfg = dict(type='ValLoop')
-val_dataloader = dict(
-    batch_size=16,
-    dataset=dict(
-        ann_file= ann_file,
-        pipeline=[
-            dict(type='PreNormalize2D'),
-            dict(dataset='coco', feats=[
-                'j',
-            ], type='GenSkeFeat'),
-            dict(
-                clip_len=100,
-                num_clips=1,
-                test_mode=True,
-                type='UniformSampleFrames'),
-            dict(type='PoseDecode'),
-            dict(num_person=2, type='FormatGCNInput'),
-            dict(type='PackActionInputs'),
-        ],
-        split='xsub_val',
-        test_mode=True,
-        type='PoseDataset'),
-    num_workers=2,
-    persistent_workers=True,
-    sampler=dict(shuffle=False, type='DefaultSampler'))
-val_evaluator = [
-    dict(type='AccMetric'),
+    dict(type='FormatGCNInput', num_person=2),
+    dict(type='PackActionInputs')
 ]
 val_pipeline = [
     dict(type='PreNormalize2D'),
-    dict(dataset='coco', feats=[
-        'j',
-    ], type='GenSkeFeat'),
+    dict(type='GenSkeFeat', dataset='coco', feats=['bm']),
     dict(
-        clip_len=100, num_clips=1, test_mode=True, type='UniformSampleFrames'),
+        type='UniformSampleFrames', clip_len=clip_len, num_clips=1, test_mode=True),
     dict(type='PoseDecode'),
-    dict(num_person=2, type='FormatGCNInput'),
-    dict(type='PackActionInputs'),
-    dict(type='AddFrameDirToMeta')
+    dict(type='FormatGCNInput', num_person=2),
+    dict(type='PackActionInputs')
 ]
-vis_backends = [
-    dict(type='LocalVisBackend'),
+test_pipeline = [
+    dict(type='PreNormalize2D'),
+    dict(type='GenSkeFeat', dataset='coco', feats=['bm']),
+    dict(
+        type='UniformSampleFrames', clip_len=clip_len, num_clips=10,
+        test_mode=True),
+    dict(type='PoseDecode'),
+    dict(type='FormatGCNInput', num_person=2),
+    dict(type='PackActionInputs')
 ]
-visualizer = dict(
-    type='ActionVisualizer', vis_backends=[
-        dict(type='LocalVisBackend'),
-    ])
-work_dir = './work_dirs\\my_stgcnpp'
+
+train_dataloader = dict(
+    batch_size=16,
+    num_workers=2,
+    persistent_workers=True,
+    sampler=dict(type='DefaultSampler', shuffle=True),
+    dataset=dict(
+        type='RepeatDataset',
+        times=5,
+        dataset=dict(
+            type=dataset_type,
+            ann_file=ann_file,
+            pipeline=train_pipeline,
+            split='xsub_train')))
+val_dataloader = dict(
+    batch_size=16,
+    num_workers=2,
+    persistent_workers=True,
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    dataset=dict(
+        type=dataset_type,
+        ann_file=ann_file,
+        pipeline=val_pipeline,
+        split='xsub_val',
+        test_mode=True))
+test_dataloader = dict(
+    batch_size=1,
+    num_workers=2,
+    persistent_workers=True,
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    dataset=dict(
+        type=dataset_type,
+        ann_file=ann_file,
+        pipeline=test_pipeline,
+        split='xsub_val',
+        test_mode=True))
+
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=EPOCH, val_begin=1, val_interval=1)
+val_cfg = dict(type='ValLoop')
+test_cfg = dict(type='TestLoop')
+
+param_scheduler = [
+    dict(
+        type='MultiStepLR',
+        begin=0,
+        end=EPOCH,
+        by_epoch=True,
+        milestones=[int(EPOCH*0.3), int(EPOCH*0.6)],
+        gamma=0.1
+    )
+]
+
+optim_wrapper = dict(
+    optimizer=dict(
+        type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0005, nesterov=True),
+    clip_grad=dict(max_norm=5, norm_type=2))
+
+auto_scale_lr = dict(enable=False, base_batch_size=128)
+
+val_evaluator = [dict(type='AccMetric')]
+test_evaluator = val_evaluator
