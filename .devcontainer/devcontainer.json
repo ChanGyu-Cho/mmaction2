@@ -1,19 +1,17 @@
 {
-    "name": "mmaction2-docker",
-    "image": "mmaction2",
-    "runArgs": [
-        "--gpus",
-        "all",
-        "-v",
-        "D:/dataset:/mmaction2/data"
-    ],
-    "workspaceFolder": "/mmaction2",
-    "extensions": [
-        "ms-python.python",
-        "ms-toolsai.jupyter",
-        "ms-vscode-remote.remote-containers"
-    ],
-    "settings": {
-        "terminal.integrated.defaultProfile.linux": "bash"
+  "name": "mmaction-dev",
+  "dockerComposeFile": ["../../Jabez/docker-compose.yml"],
+  "service": "mmaction",
+  "workspaceFolder": "/workspace/mmaction2",
+  "remoteUser": "root",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "ms-toolsai.jupyter"],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/conda/envs/mmaction/bin/python"
+      }
     }
+  },
+  "runServices": ["mmaction"],
+  "shutdownAction": "stopCompose"
 }
