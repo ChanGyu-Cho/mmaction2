@@ -5,7 +5,7 @@ load_from = r"D:\mmaction2\checkpoints\stgcnpp_8xb16-joint-u100-80e_ntu60-xsub-k
 dataset_type = 'PoseDataset'
 ann_file = r"D:\golfDataset\dataset\crop_pkl\train_unnorm.pkl"
 test_ann_file = r"D:\golfDataset\dataset\crop_pkl\test_unnorm.pkl"
-EPOCH = 5
+EPOCH = 50
 clip_len = 50
 fp16 = None
 # dict(type='Fp16OptimizerHook', loss_scale='dynamic') 원래
@@ -93,7 +93,7 @@ param_scheduler = [
 
 optim_wrapper = dict(
     optimizer=dict(
-        type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0005, nesterov=True),
+        type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0005, nesterov=True),
     clip_grad=dict(max_norm=5, norm_type=2))
 
 auto_scale_lr = dict(enable=False, base_batch_size=128)

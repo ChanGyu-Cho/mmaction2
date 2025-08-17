@@ -5,9 +5,15 @@ default_hooks = dict(
     timer=dict(type='IterTimerHook'),
     logger=dict(type='LoggerHook', interval=20, ignore_last=False),
     param_scheduler=dict(type='ParamSchedulerHook'),
-    checkpoint=dict(type='CheckpointHook', interval=1, save_best='auto'),
+    checkpoint=dict(
+        type='CheckpointHook',
+        interval=1,
+        save_best='acc/top1',  # ← 여기!
+        rule='greater'             # (추가: 값이 클수록 좋음)
+    ),
     sampler_seed=dict(type='DistSamplerSeedHook'),
-    sync_buffers=dict(type='SyncBuffersHook'))
+    sync_buffers=dict(type='SyncBuffersHook')
+)
 
 env_cfg = dict(
     cudnn_benchmark=False,
