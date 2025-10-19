@@ -1,32 +1,45 @@
-FROM nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04
+# ----------------------------------------
+# MMACTION + FastAPI Layer
+# ----------------------------------------
+FROM mmaction2-base:latest
 
-RUN apt-get update && apt-get install -y \
-    git \
-    ffmpeg \
-    libsm6 \
-    libxext6 \
-    libgl1-mesa-glx \
-    curl \
-    wget \
-    ca-certificates \
-    python3-pip \
-    python3-dev \
-    python3-setuptools \
-    ninja-build \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip
-RUN pip install torch==1.13.1 torchvision==0.14.1 --extra-index-url https://download.pytorch.org/whl/cu116
+# 1. 의존성 파일을 먼저 복사하여 캐시 활용도를 높입니다.
+# requirements.txt만 복사합니다. 이 파일이 변경되지 않으면 다음 pip install은 캐시를 사용합니다.
+# Copy the merged requirements (base + API) and install them
+# Copy the API-specific requirements (docker/requirements.txt). Do NOT copy the repo-root requirements.txt
+# which pulls the full project dependencies and may conflict with the runtime environment.
+COPY ./docker/requirements.txt /mmaction2/requirements.txt
+# Ensure we install into the Conda Python that the base image uses at runtime
+ENV PYTHON=/opt/conda/bin/python
+RUN ${PYTHON} -m pip install --no-cache-dir -r /mmaction2/requirements.txt
 
-RUN pip install -U openmim && \
-    mim install mmengine==0.7.4 && \
-    mim install mmcv==2.1.0
+# install py-spy for runtime profiling/debugging (이것도 자주 바뀌지 않으니 여기에 유지)
+RUN ${PYTHON} -m pip install py-spy
 
-WORKDIR /workspace
-RUN git clone https://github.com/open-mmlab/mmaction2.git
-WORKDIR /workspace/mmaction2
-RUN pip install -e .
+# default workdir 유지
+WORKDIR /mmaction2
 
-RUN python -c "import torch; import mmcv; import mmaction; print('✅ All dependencies are installed correctly.')"
+ENV FORCE_CUDA="1"
+ENV PORT=19031
+# Allow overriding PYTHONPATH at build/run time. Declare ARG so the variable is defined at build-time,
+# then set ENV using that ARG to avoid BuildKit undefined-variable warnings.
+ARG PYTHONPATH=""
+ENV PYTHONPATH="/mmaction2:/mmaction2/mmaction:/mmaction2/api_src:${PYTHONPATH}"
 
-WORKDIR /workspace/mmaction2
+# 3. 나머지 FastAPI 서버 코드 복사
+# 이제 이 COPY 명령은 requirements.txt가 변경되지 않은 경우에도 이후의 레이어에만 영향을 미칩니다.
+COPY ./docker/api_src /mmaction2/api_src/
+
+# expose an extra test port (if needed)
+EXPOSE 19031
+
+WORKDIR /mmaction2/api_src
+
+# Copy entrypoint that performs pre-import checks and starts the server
+COPY ./docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Use entrypoint for initialization; CMD provides default args if no command provided
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["python", "-m", "uvicorn", "api_src.api_server:app", "--host", "0.0.0.0", "--port", "19031"]
