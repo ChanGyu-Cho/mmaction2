@@ -365,7 +365,10 @@ def parse_test_result(result_data):
     # For this API we only need the model's prediction (binary mapping):
     # - treat predicted_class == 1 as True, predicted_class == 0 as False
     # - ignore ground-truth fields (client is using this for inference only)
-    predictions = []
+    # To make the JSON frontend-friendly, return a simple list of booleans
+    # in `predictions` where each element corresponds to the sample index.
+    # Values are True/False (or None if prediction could not be resolved).
+    preds = []
     for idx, item in enumerate(result_data):
         pred_bool = None
         # normalized predicted label extraction
@@ -389,15 +392,12 @@ def parse_test_result(result_data):
             except Exception:
                 pred_bool = None
 
-        predictions.append({
-            "sample_index": idx,
-            "prediction": pred_bool,
-        })
+        preds.append(pred_bool)
 
     result = {
         "status": "success",
         "num_samples": len(result_data),
-        "predictions": predictions,
+        "predictions": preds,
     }
 
     return result
